@@ -5,7 +5,15 @@ import io
 st.set_page_config(page_title="Caution Letter Generator", layout="wide")
 
 st.title("Caution Letter Data Generator ✉️")
-st.markdown("This version removes duplicates to ensure **one row per student**.")
+st.markdown("One row per student | Clean Phone Numbers | Split Columns")
+
+# --- Helper Function to Clean Phone Numbers ---
+def clean_phone(value):
+    if pd.isna(value) or str(value).strip() == "":
+        return ""
+    # Convert to string, remove .0 if it exists, then strip spaces
+    phone_str = str(value).replace('.0', '').strip()
+    return phone_str
 
 # --- FILE UPLOAD SECTION ---
 col1, col2 = st.columns(2)
@@ -21,30 +29,20 @@ with col2:
 
 if shortage_file and master_file:
     try:
-        # Load Attendance
-        if shortage_file.name.endswith('.csv'):
-            df_att_raw = pd.read_csv(shortage_file, skiprows=skip_rows-1)
-        else:
-            df_att_raw = pd.read_excel(shortage_file, skiprows=skip_rows-1)
+        # Load Attendance (B=1, C=2, G=6)
+        df_att_raw = pd.read_excel(shortage_file, skiprows=skip_rows-1) if shortage_file.name.endswith('.xlsx') else pd.read_csv(shortage_file, skiprows=skip_rows-1)
+        
+        # Load Master (B=1, S=18, AD=29, AS=44, AT=45)
+        df_mast_raw = pd.read_excel(master_file) if master_file.name.endswith('.xlsx') else pd.read_csv(master_file)
 
-        # Load Master
-        if master_file.name.endswith('.csv'):
-            df_mast_raw = pd.read_csv(master_file)
-        else:
-            df_mast_raw = pd.read_excel(master_file)
-
-        if st.button("Generate Unique Caution List"):
+        if st.button("Generate Final Report"):
             
-            # 1. Extraction (Using your specific columns)
-            # Att: B=1, C=2, G=6
+            # 1. Extraction & De-duplication
             att_subset = df_att_raw.iloc[:, [1, 2, 6]].copy()
             att_subset.columns = ['Roll_No', 'Student_Name', 'Batch']
-
-            # 2. REMOVE DUPLICATES HERE
-            # This keeps only the first time a Roll Number appears
             att_subset = att_subset.drop_duplicates(subset=['Roll_No'], keep='first')
 
-            # 3. Extraction Master: B=1, AD=29, S=18, AT=45, AS=44
+            # 2. Extraction Master
             mast_subset = df_mast_raw.iloc[:, [1, 29, 18, 45, 44]].copy()
             mast_subset.columns = ['Roll_No', 'Father_Name', 'Address', 'Father_Phone', 'Student_Phone']
 
@@ -52,10 +50,10 @@ if shortage_file and master_file:
             att_subset['Roll_No'] = att_subset['Roll_No'].astype(str).str.strip()
             mast_subset['Roll_No'] = mast_subset['Roll_No'].astype(str).str.strip()
 
-            # 4. Merge
+            # 3. Merge
             merged_df = pd.merge(att_subset, mast_subset, on='Roll_No', how='left')
 
-            # 5. Final Formatting
+            # 4. Final Formatting & Phone Cleaning
             final_report = pd.DataFrame()
             final_report['Sl No'] = range(1, len(merged_df) + 1)
             final_report['Batch'] = merged_df['Batch']
@@ -63,33 +61,30 @@ if shortage_file and master_file:
             final_report['Tracking ID'] = "" 
             final_report['Roll no'] = merged_df['Roll_No']
             final_report['Student name'] = merged_df['Student_Name']
+            final_report['Complete Address'] = merged_df['Address']
             
-            def format_address(row):
-                addr = str(row['Address']) if pd.notnull(row['Address']) else ""
-                f_phone = str(row['Father_Phone']) if pd.notnull(row['Father_Phone']) else ""
-                s_phone = str(row['Student_Phone']) if pd.notnull(row['Student_Phone']) else ""
-                return f"{addr} | Father No: {f_phone} | Student No: {s_phone}"
+            # Clean the phone numbers specifically
+            final_report['Father Number'] = merged_df['Father_Phone'].apply(clean_phone)
+            final_report['Student Number'] = merged_df['Student_Phone'].apply(clean_phone)
 
-            final_report['complete address'] = merged_df.apply(format_address, axis=1)
-
-            # 6. Excel Export Logic
+            # 5. Excel Export Logic
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 final_report.to_excel(writer, index=False, sheet_name='Caution_List')
             excel_data = buffer.getvalue()
 
-            # 7. Results
-            st.success(f"Cleaned! Total unique students found: {len(final_report)}")
+            # 6. Results Display
+            st.success(f"Success! {len(final_report)} unique students processed.")
             st.dataframe(final_report, hide_index=True)
 
             st.download_button(
-                label="Download Excel (Unique Students)",
+                label="Download Final Excel Report",
                 data=excel_data,
-                file_name="Caution_Letter_Data.xlsx",
+                file_name="Caution_Letters_Final.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
     except Exception as e:
-        st.error(f"Something went wrong: {e}")
+        st.error(f"Error: {e}")
 else:
-    st.info("Upload files to generate the caution letter list.")
+    st.info("Please upload both files to generate the report.")
